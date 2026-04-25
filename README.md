@@ -28,10 +28,10 @@ methods.
 ## Method
 <img src="./imgs/overall.png" width=100% height=100%>
 
-**Overall architecture of BuildingGPT. Our BuildingGPT is trained in two stages. In the first stage, the model is pre-trained in an
+**Overall architecture of BuildingGPT.** Our BuildingGPT is trained in two stages. In the first stage, the model is pre-trained in an
 auto-regressive manner. Given the latent code encoded by the point cloud encoder, the wireframe sequence is generated through next-token
 prediction. In the second stage, we construct a preference pair dataset using the proposed Preference Score Function (PSF) and post-train
-the model with Direct Preference Optimization (DPO) to further enhance reconstruction quality.**
+the model with Direct Preference Optimization (DPO) to further enhance reconstruction quality.
 
 ## Environment
 ```
