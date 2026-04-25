@@ -42,7 +42,7 @@ pip install -r requirements.txt
 ```
 
 ## Data
-The processed dataset of building3d is stored in [this link]()
+The processed dataset of MunichWF is stored in [this link]()
 
 ## Training 
 ```
