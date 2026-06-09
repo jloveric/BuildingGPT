@@ -63,7 +63,7 @@ If you find BuildingGPT useful in your research, please cite our paper:
 ```
 @inproceedings{liu2026BuildingGPT,
   title={BuildingGPT: Auto-Regressive Building Wireframe Reconstruction Model with Reinforcement Learning},
-  author={Liu, Yuzhou and Zhu, Lingjie and Ye, Hanqiao and Liu, Yuzhun, and Huang, Shangfeng and Gao, Xiang and Wang, Ruisheng and Shen, Shuhan},
+  author={Liu, Yuzhou and Zhu, Lingjie and Ye, Hanqiao and Liu, Yujun, and Huang, Shangfeng and Gao, Xiang and Wang, Ruisheng and Shen, Shuhan},
   booktitle={Proceedings of the Computer Vision and Pattern Recognition Conference},
   pages={36400-36410},
   year={2026}
