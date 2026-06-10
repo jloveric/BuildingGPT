@@ -66,61 +66,61 @@ def load_mesh(path):
     return vertices, faces
 
 
-def normalize_mesh(vertices1, v1, v_ori, bound=0.95):
+def normalize_mesh(vertices1, v1, bound=0.95):
 
     centroid = np.mean(np.vstack((vertices1,v1))[:, 0:3], axis=0)
     vertices1 -= centroid
     v1 -= centroid
-    v_ori -= centroid
+ 
     
     max_distance = np.max(np.linalg.norm(np.vstack((vertices1, v1)), axis=1))     
     a = np.random.uniform(0, 1)
     vertices1 /= (max_distance)
     v1 /= (max_distance)
-    v_ori /= (max_distance)
+    
     
     if a < 0.4:
         vertices1 *= ((bound))
-        v_ori *= ((bound))
+        
         v1 *= (bound)
         
     else:
         if a < 0.6:
             vertices1[:,0] *= ((bound))
-            v_ori[:,0] *= ((bound))
+            
             v1[:,0] *= (bound)
             
         else:
             if a < 0.8:
                 vertices1[:,1] *= ((bound))
-                v_ori[:,1] *= ((bound))
+                
                 v1[:,1] *= (bound)
                
             else:
                 if a < 1:
                     vertices1[:,2] *= ((bound))
-                    v_ori[:,2] *= ((bound))
+                    
                     v1[:,2] *= (bound)
                     
-    return vertices1, v1, v_ori
-def normalize_mesh2(vertices1, v1, v_ori, bound=1):
+    return vertices1, v1
+def normalize_mesh2(vertices1, v1, bound=1):
 
     centroid = np.mean(np.vstack((vertices1,v1))[:, 0:3], axis=0)
     vertices1 -= centroid
     v1 -= centroid
-    v_ori -= centroid
+    
     
     max_distance = np.max(np.linalg.norm(np.vstack((vertices1, v1)), axis=1))     
     vertices1 /= (max_distance)
     v1 /= (max_distance)
-    v_ori /= (max_distance)
+    
     
 
     vertices1 *= ((bound))
     v1 *= (bound)
-    v_ori *= ((bound))
+    
                     
-    return vertices1, v1, v_ori
+    return vertices1, v1
 
 def normalize_mesh3(vertices1_w, vertices1_l, v1,  bound=1):
 
