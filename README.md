@@ -58,6 +58,10 @@ accelerate launch --config_file acc_configs/gpu8.yaml main.py ArAE --workspace w
 python infer.py ArAE --workspace workspace --resume pretrained/ArAE.safetensors --test_path data_mesh/ --generate_mode sample --test_num_face 1000 --test_repeat 1 --seed 42
 ```
 
+## Checkpoints
+The checkpoints can be downloaded in [this link](https://drive.google.com/file/d/1MLAF3pCVjt8Z27aDnfkMO_IokfN3B4P3/view?usp=drive_link).
+
+
 ## Citation
 If you find BuildingGPT useful in your research, please cite our paper:
 ```
