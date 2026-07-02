@@ -32,6 +32,7 @@ from core.models import LMM
 from core.utils import load_mesh, get_tokenizer
 from core.utils import monkey_patch_transformers
 from core.provider import tokenize_mesh
+from core.pointcloud_filter import filter_interior_points
 
 def load_wireframe(wireframe_file):
     vertices = []
@@ -168,6 +169,21 @@ def process(opt: Options, path):
         pc = trimesh.load(xyz_path, process=False)  # process=False 避免对点云做额外处理
         points = pc.vertices  # (N, 3)
         print(f'[INFO] Point cloud size: {len(points)}')
+        if opt.filter_interior_points:
+            t_filter0 = time.time()
+            points = filter_interior_points(
+                points,
+                num_views=opt.filter_num_views,
+                azimuth_bins=opt.filter_azimuth_bins,
+                elevation_bins=opt.filter_elevation_bins,
+                view_radius_scale=opt.filter_view_radius_scale,
+                max_points_for_filter=opt.filter_max_points,
+            )
+            t_filter1 = time.time()
+            print(
+                f'[INFO] Interior filter kept {len(points)} points '
+                f'in {(t_filter1 - t_filter0):.2f}s'
+            )
         v = sample_points_fast(points, opt.point_num, device=device)
 
         # Match eval preprocessing in GithubDataset: center, unit ball, scale to 0.85.

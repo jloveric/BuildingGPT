@@ -65,6 +65,18 @@ echo "data/pc/your_pointcloud.ply" > my_input.txt
 uv run python infer.py ArAE --workspace workspace --resume pretrained/ArAE.safetensors --test_path my_input.txt --generate_mode sample --test_num_face 1000 --test_repeat 1 --seed 42
 ```
 
+Optional: try removing likely interior points before sampling (useful for dense LOD point clouds):
+```
+uv run python infer.py ArAE --workspace workspace --resume pretrained/ArAE.safetensors --test_path my_input.txt --generate_mode sample --test_num_face 1000 --test_repeat 1 --seed 42 --filter-interior-points
+```
+
+## CloudComPy Shell Helper
+If you installed CloudComPy manually under `third_party/cloudcompy/CloudComPy312`, start a clean shell with all required env vars in one command:
+```
+bash scripts/cloudcompy_shell.sh
+```
+This activates `.venv`, sources CloudComPy's `envCloudComPy.sh`, sets `QT_QPA_PLATFORM=offscreen`, and drops you into an interactive shell.
+
 ## Checkpoints
 The checkpoints can be downloaded in [this link](https://drive.google.com/file/d/1MLAF3pCVjt8Z27aDnfkMO_IokfN3B4P3/view?usp=drive_link).
 

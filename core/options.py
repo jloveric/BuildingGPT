@@ -150,6 +150,17 @@ class Options:
     test_num_face: Tuple[int, ...] = (1000,)
     # test max seq len
     test_max_seq_length: Optional[int] = None
+    # remove likely interior points using multi-view visibility
+    filter_interior_points: bool = False
+    # number of virtual camera views for interior filtering
+    filter_num_views: int = 24
+    # angular bins for interior filtering
+    filter_azimuth_bins: int = 192
+    filter_elevation_bins: int = 96
+    # camera distance scale relative to bbox diagonal
+    filter_view_radius_scale: float = 2.5
+    # cap points used during filtering for speed
+    filter_max_points: int = 1200000
 
     
 # all the default settings
