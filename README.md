@@ -37,9 +37,13 @@ the model with Direct Preference Optimization (DPO) to further enhance reconstru
 ```
 git clone https://github.com/3dv-casia/BuildingGPT
 cd BuildingGPT
-pip install flash-attn --no-build-isolation
-pip install -r requirements.txt
+uv sync
+uv sync --group flash-attn
 ```
+
+Requires [uv](https://docs.astral.sh/uv/). The first command creates a `.venv` and installs core dependencies; the second adds flash-attn (built without isolation, as upstream requires).
+
+PyTorch is pinned to **CUDA 12.4** wheels (`torch 2.6.0+cu124`) via the PyTorch index in `pyproject.toml`, so it works with driver 12.4 without upgrading the system CUDA stack.
 
 ## Data
 The processed dataset of MunichWF is stored in [this link](https://huggingface.co/datasets/zyl111/MunichWF/tree/main)
@@ -47,15 +51,18 @@ The processed dataset of MunichWF is stored in [this link](https://huggingface.c
 ## Training 
 ```
 # debug training
-accelerate launch --config_file acc_configs/gpu1.yaml main.py ArAE --workspace workspace_train
+uv run accelerate launch --config_file acc_configs/gpu1.yaml main.py ArAE --workspace workspace_train
 
 # single-node training (use slurm for multi-nodes training)
-accelerate launch --config_file acc_configs/gpu8.yaml main.py ArAE --workspace workspace_train
+uv run accelerate launch --config_file acc_configs/gpu8.yaml main.py ArAE --workspace workspace_train
 ```
 
 ## Inference 
 ```
-python infer.py ArAE --workspace workspace --resume pretrained/ArAE.safetensors --test_path data_mesh/ --generate_mode sample --test_num_face 1000 --test_repeat 1 --seed 42
+# test_path is a text file with one input per line: a .ply path or a basename under data/pc/
+echo "data/pc/your_pointcloud.ply" > my_input.txt
+
+uv run python infer.py ArAE --workspace workspace --resume pretrained/ArAE.safetensors --test_path my_input.txt --generate_mode sample --test_num_face 1000 --test_repeat 1 --seed 42
 ```
 
 ## Checkpoints

@@ -25,6 +25,27 @@ from core.transformer.attention import attention
 
 import kiui
 
+def _get_past_length(past_key_values) -> int:
+    if past_key_values is None:
+        return 0
+    if hasattr(past_key_values, "get_seq_length"):
+        return past_key_values.get_seq_length()
+    return past_key_values[0][0].shape[2]
+
+def _is_cache_object(past_key_values) -> bool:
+    return past_key_values is not None and hasattr(past_key_values, "update") and hasattr(past_key_values, "layers")
+
+def _get_layer_past_key_value(past_key_values, layer_idx):
+    if past_key_values is None:
+        return None
+    if _is_cache_object(past_key_values):
+        if layer_idx < len(past_key_values.layers):
+            layer = past_key_values.layers[layer_idx]
+            if layer.is_initialized and layer.get_seq_length() > 0:
+                return layer.keys, layer.values
+        return None
+    return past_key_values[layer_idx]
+
 class MLP(nn.Module):
     def __init__(self, dim_in, dim_out, dim_hidden, num_layers, bias=True):
         super().__init__()
@@ -337,12 +358,14 @@ class ShapeOPTDecoder(ShapeOPTPreTrainedModel):
         use_cache = use_cache if use_cache is not None else self.config.use_cache
         return_dict = return_dict if return_dict is not None else self.config.use_return_dict
 
-        if input_ids is not None: # input_embeds asserts to be None
+        if inputs_embeds is None:
+            if input_ids is None:
+                raise ValueError("Either input_ids or inputs_embeds must be provided")
             input_ids = input_ids.view(-1, input_ids.shape[-1])
             inputs_embeds = self.embd(input_ids)
 
         batch_size, seq_length = inputs_embeds.shape[:2]
-        past_key_values_length = past_key_values[0][0].shape[2] if past_key_values is not None else 0
+        past_key_values_length = _get_past_length(past_key_values)
         mask_seq_length = past_key_values_length + seq_length
 
         # embed positions
@@ -359,7 +382,7 @@ class ShapeOPTDecoder(ShapeOPTPreTrainedModel):
         # decoder layers
         all_hidden_states = () if output_hidden_states else None
         all_self_attns = () if output_attentions else None
-        next_decoder_cache = () if use_cache else None
+        next_decoder_cache = () if use_cache and not _is_cache_object(past_key_values) else None
 
         # check if head_mask has a correct number of layers specified if desired
         for attn_mask, mask_name in zip([head_mask], ["head_mask"]):
@@ -380,7 +403,7 @@ class ShapeOPTDecoder(ShapeOPTPreTrainedModel):
                 if dropout_probability < self.config.layerdrop:
                     continue
             
-            past_key_value = past_key_values[idx] if past_key_values is not None else None
+            past_key_value = _get_layer_past_key_value(past_key_values, idx)
             
             if self.gradient_checkpointing and self.training:
                 layer_outputs = self._gradient_checkpointing_func(
@@ -405,7 +428,17 @@ class ShapeOPTDecoder(ShapeOPTPreTrainedModel):
             hidden_states = layer_outputs[0]
 
             if use_cache:
-                next_decoder_cache += (layer_outputs[2 if output_attentions else 1],)
+                present_key_value = layer_outputs[2 if output_attentions else 1]
+                if _is_cache_object(past_key_values):
+                    key_states, value_states = present_key_value
+                    new_seq_len = hidden_states.shape[1]
+                    past_key_values.update(
+                        key_states[:, :, -new_seq_len:, :],
+                        value_states[:, :, -new_seq_len:, :],
+                        layer_idx=idx,
+                    )
+                else:
+                    next_decoder_cache += (present_key_value,)
 
             if output_attentions:
                 all_self_attns += (layer_outputs[1],)
@@ -413,7 +446,7 @@ class ShapeOPTDecoder(ShapeOPTPreTrainedModel):
         if output_hidden_states:
             all_hidden_states += (hidden_states,)
 
-        next_cache = next_decoder_cache if use_cache else None
+        next_cache = past_key_values if _is_cache_object(past_key_values) and use_cache else next_decoder_cache
         
         if not return_dict:
             return tuple(v for v in [hidden_states, next_cache, all_hidden_states, all_self_attns] if v is not None)
@@ -517,33 +550,43 @@ class ShapeOPT(ShapeOPTPreTrainedModel, GenerationMixin):
         )
 
     def prepare_inputs_for_generation(
-        self, input_ids, past_key_values=None, attention_mask=None, inputs_embeds=None, num_tokens=None, **kwargs
+        self,
+        input_ids,
+        past_key_values=None,
+        attention_mask=None,
+        inputs_embeds=None,
+        num_tokens=None,
+        next_sequence_length=None,
+        is_first_iteration=False,
+        **kwargs,
     ):
+        model_inputs = {}
 
-        if past_key_values is not None:
-            past_length = past_key_values[0][0].shape[2]
+        if not self.config.is_encoder_decoder and inputs_embeds is not None and is_first_iteration:
+            prompt_embeds = (
+                inputs_embeds[:, -next_sequence_length:, :]
+                if next_sequence_length is not None
+                else inputs_embeds
+            )
+            model_inputs["inputs_embeds"] = prompt_embeds
+        elif past_key_values is not None:
+            past_length = _get_past_length(past_key_values)
 
-            # Some generation methods already pass only the last input ID
             if input_ids.shape[1] > past_length:
                 remove_prefix_length = past_length
             else:
-                # Default to old behavior: keep only final ID
                 remove_prefix_length = input_ids.shape[1] - 1
 
-            input_ids = input_ids[:, remove_prefix_length:]
-
-        # if `inputs_embeds` are passed, we only want to use them in the 1st generation step
-        if inputs_embeds is not None and past_key_values is None:
-            B = inputs_embeds.shape[0]
-            model_inputs = {"inputs_embeds": inputs_embeds}
+            model_inputs["input_ids"] = input_ids[:, remove_prefix_length:]
+        elif inputs_embeds is not None:
+            model_inputs["inputs_embeds"] = inputs_embeds
         else:
-            B = input_ids.shape[0]
-            model_inputs = {"input_ids": input_ids}
+            model_inputs["input_ids"] = input_ids
 
         model_inputs.update({
             "past_key_values": past_key_values,
             "use_cache": kwargs.get("use_cache"),
-            "num_tokens": num_tokens, # extra input
+            "num_tokens": num_tokens,
             "attention_mask": attention_mask,
         })
 

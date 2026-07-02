@@ -1,0 +1,58 @@
+[project]
+name = "buildinggpt"
+version = "0.1.0"
+description = "Auto-Regressive Building Wireframe Reconstruction Model with Reinforcement Learning"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "scipy",
+    "ninja",
+    "Pillow",
+    "pandas",
+    "imageio",
+    "imageio-ffmpeg",
+    "opencv-python",
+    "scikit-image",
+    "scikit-learn",
+    "torch",
+    "torchvision",
+    "torch-cluster",
+    "einops",
+    "transformers",
+    "accelerate",
+    "diffusers",
+    "huggingface-hub",
+    "safetensors",
+    "rich",
+    "tqdm",
+    "tyro",
+    "rembg",
+    "gradio",
+    "omegaconf",
+    "plyfile",
+    "pygltflib",
+    "pymeshlab",
+    "trimesh",
+    "xatlas",
+    "kiui",
+    "pybind11",
+    "megfile",
+    "wandb",
+]
+
+[dependency-groups]
+flash-attn = ["flash-attn"]
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
+[tool.uv]
+find-links = ["https://data.pyg.org/whl/torch-2.6.0+cu124.html"]
+no-build-isolation-package = ["flash-attn"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu124" }
+torchvision = { index = "pytorch-cu124" }

@@ -51,38 +51,65 @@ def load_wireframe(wireframe_file):
     edges = np.array(list(edges))
     return vertices, edges
 
-def normalize_mesh(vertices1,  bound=1):
-    centroid = np.mean(np.vstack((vertices1))[:, 0:3], axis=0)
-    vertices1 -= centroid
-    max_distance = np.max(np.linalg.norm(np.vstack((vertices1)), axis=1))     
-    vertices1 /= ((max_distance)/(bound))
-    return vertices1
+def normalize_points(points, bound=0.85):
+    points = points.copy()
+    centroid = points.mean(axis=0)
+    points -= centroid
+    max_distance = np.linalg.norm(points, axis=1).max()
+    points /= max_distance
+    points *= bound
+    return points
 
-def fps(points, num_points):
-    """ Farthest Point Sampling (FPS) """
-    # points: [N, 3]
-    # num_points: int, target number of points to sample
-    N = points.shape[0]
-    if N <= num_points:
-        return points  # If the points are less than or equal to the target, return all points
 
-    centroids = np.zeros((num_points, 3))  # To store the centroids (sampled points)
-    distance = np.ones(N) * 1e10  # Initialize distance array
+def resolve_point_cloud_path(path: str) -> str:
+    if os.path.isfile(path):
+        return path
 
-    # Start by selecting a random point
-    idx = np.random.randint(0, N)
-    centroids[0] = points[idx]
-    distance[:] = np.linalg.norm(points - centroids[0], axis=1)
+    repo_root = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(repo_root, path),
+        os.path.join(repo_root, f'{path}.ply'),
+        os.path.join(repo_root, 'data', 'pc', path),
+        os.path.join(repo_root, 'data', 'pc', f'{path}.ply'),
+    ]
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
 
-    for i in range(1, num_points):
-        # Select the next point that is the farthest from the already chosen points
-        farthest_idx = np.argmax(distance)
-        centroids[i] = points[farthest_idx]
+    raise FileNotFoundError(
+        f"Point cloud not found for {path!r}. "
+        "Pass a .ply file path or a basename under data/pc/."
+    )
 
-        # Update the distance array
-        distance = np.minimum(distance, np.linalg.norm(points - centroids[i], axis=1))
 
-    return centroids
+def sample_points_fast(points, num_points, device, pre_pool_size=200000):
+    # For huge point clouds, first randomly reduce to a manageable pool.
+    if len(points) > pre_pool_size:
+        pool_idx = np.random.choice(len(points), pre_pool_size, replace=False)
+        pool = points[pool_idx]
+    else:
+        pool = points
+
+    if len(pool) <= num_points:
+        sample_idx = np.random.choice(len(pool), num_points, replace=True)
+        return pool[sample_idx]
+
+    if device.type == 'cuda':
+        import torch_cluster
+
+        pc = torch.from_numpy(pool).float().to(device)
+        batch_idx = torch.zeros(pc.shape[0], dtype=torch.long, device=device)
+        ratio = num_points / pc.shape[0]
+        fps_idx = torch_cluster.fps(pc, batch_idx, ratio=ratio)
+        if fps_idx.shape[0] < num_points:
+            extra = torch.randint(0, pc.shape[0], (num_points - fps_idx.shape[0],), device=device)
+            fps_idx = torch.cat([fps_idx, extra], dim=0)
+        fps_idx = fps_idx[:num_points]
+        return pc[fps_idx].detach().cpu().numpy()
+
+    # CPU fallback: random sample to avoid very slow O(N*K) Python FPS.
+    sample_idx = np.random.choice(len(pool), num_points, replace=False)
+    return pool[sample_idx]
 
 
 monkey_patch_transformers()
@@ -136,51 +163,38 @@ def process(opt: Options, path):
         cond = F.interpolate(image, (512, 512), mode='bilinear', align_corners=False) # match training data and DINO.
 
     elif opt.cond_mode == 'point':
-        xyz_path_all = '/path/buildinggpt/data/pc'
-        xyz_path = os.path.join(xyz_path_all, path+'.ply')
+        xyz_path = resolve_point_cloud_path(path)
+        print(f'[INFO] Loading point cloud: {xyz_path}')
         pc = trimesh.load(xyz_path, process=False)  # process=False 避免对点云做额外处理
         points = pc.vertices  # (N, 3)
-        num1 = 4096
-        
-        # 采样 self.opt.point_num 个点
-        if len(points) >= num1:
-            indices = np.random.choice(len(points), num1, replace=False)
-        else:
-            indices = np.random.choice(len(points), num1, replace=True)
+        print(f'[INFO] Point cloud size: {len(points)}')
+        v = sample_points_fast(points, opt.point_num, device=device)
 
-        # num2 = 4096
-        # if num1 < num2:
-        #     extra_indices = np.random.choice(num1, num2 - num1, replace=True)
-        #     indices = np.concatenate([indices, indices[extra_indices]])
-        
-        v = points[indices]
-        #max_distance = np.max(np.linalg.norm(np.vstack(v), axis=1))  
-        #v = v+ np.random.randn(*v.shape) * 0.05 * max_distance
-        v = normalize_mesh(v)
-                    
-    
+        # Match eval preprocessing in GithubDataset: center, unit ball, scale to 0.85.
+        v = normalize_points(v, bound=0.85)
         cond = torch.from_numpy(v).unsqueeze(0).float().to(device) # [N, 3]
 
-        
-        # trimesh.PointCloud(v).export(f'{opt.workspace}/{name}_pc.obj')
-
-        
-        
+        debug_pc_path = os.path.join(opt.workspace, f'{name}_input_seed{opt.seed}.obj')
+        with open(debug_pc_path, 'w') as f:
+            for vertex in v:
+                f.write(f'v {vertex[0]:.6f} {vertex[1]:.6f} {vertex[2]:.6f}\n')
+        print(f'[INFO] Saved normalized input point cloud to {debug_pc_path}')
     elif opt.cond_mode == 'none':
         cond = torch.zeros((1, 0), dtype=torch.float32, device=device) # [1, 0], dummy cond to get batch size
 
     for i in range(opt.test_repeat):
 
         t0 = time.time()
-        filename = f'{name}_{i}'
+        filename = f'{name}_seed{opt.seed}_{i}'
         with torch.no_grad():
-            with torch.autocast(device_type='cuda', dtype=torch.float16):
+            with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=device.type == 'cuda'):
                 model.generate(cond, num_faces=opt.test_num_face[0], max_new_tokens=opt.test_max_seq_length, tokenizer=tokenizer, clean=True, file_path = f'{opt.workspace}/{filename}.obj')
         
         # single batch
 
         # timing
-        torch.cuda.synchronize()
+        if device.type == 'cuda':
+            torch.cuda.synchronize()
         t1 = time.time()
         print(f'[INFO] Processing {path} --> {filename}.obj, time = {t1 - t0:.4f}s')
     
