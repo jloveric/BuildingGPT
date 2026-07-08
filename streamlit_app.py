@@ -21,6 +21,7 @@ DEFAULT_DATA_DIR = Path("/data2/point-cloud-datasets/MunichWF/pc_part")
 DEFAULT_WORKSPACE = REPO_ROOT / "workspace"
 DEFAULT_CHECKPOINT = REPO_ROOT / "pretrained" / "ArAE.safetensors"
 DEFAULT_MANIFEST = DEFAULT_WORKSPACE / "munichwf_manifest.json"
+DEFAULT_TEST_LIST = Path("/data2/point-cloud-datasets/MunichWF/test_list.txt")
 
 
 def normalize_points(points: np.ndarray, bound: float = 0.85) -> np.ndarray:
@@ -84,7 +85,22 @@ def load_ply_points(path: Path, downsample_n: int, seed: int) -> np.ndarray:
 
 
 @st.cache_data(show_spinner=False)
-def load_or_build_manifest(data_dir: str, manifest_path: str) -> List[dict]:
+def load_test_stems(test_list_path: str) -> set[str]:
+    path = Path(test_list_path)
+    if not path.exists():
+        return set()
+
+    stems: set[str] = set()
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            stem = line.strip()
+            if stem:
+                stems.add(stem)
+    return stems
+
+
+@st.cache_data(show_spinner=False)
+def load_or_build_manifest(data_dir: str, manifest_path: str, allowed_stems: tuple[str, ...]) -> List[dict]:
     root = Path(data_dir)
     if not root.exists():
         return []
@@ -94,10 +110,16 @@ def load_or_build_manifest(data_dir: str, manifest_path: str) -> List[dict]:
         with manifest_file.open("r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, list):
+            if allowed_stems:
+                allowed = set(allowed_stems)
+                data = [entry for entry in data if Path(str(entry.get("path", ""))).stem in allowed]
             return data
 
     entries: List[dict] = []
+    allowed = set(allowed_stems)
     for p in sorted(root.rglob("*.ply")):
+        if allowed and p.stem not in allowed:
+            continue
         relpath = str(p.relative_to(root))
         entries.append(
             {
@@ -695,11 +717,17 @@ def main() -> None:
             st.error(f"Point cloud folder does not exist: `{data_dir}`.")
             st.stop()
 
-        if not manifest_path.exists():
-            with st.spinner("Building point-cloud manifest..."):
-                manifest = load_or_build_manifest(str(data_dir), str(manifest_path))
-        else:
-            manifest = load_or_build_manifest(str(data_dir), str(manifest_path))
+        test_stems = load_test_stems(str(DEFAULT_TEST_LIST))
+        if not test_stems:
+            st.error(f"Test list not found or empty: `{DEFAULT_TEST_LIST}`.")
+            st.stop()
+
+        with st.spinner("Loading point-cloud manifest..."):
+            manifest = load_or_build_manifest(
+                str(data_dir),
+                str(manifest_path),
+                tuple(sorted(test_stems)),
+            )
 
         if not manifest:
             st.error(f"No .ply files found in `{data_dir}`.")
@@ -712,7 +740,7 @@ def main() -> None:
             st.stop()
 
         st.caption(
-            f"Manifest entries: {len(manifest)} | Showing: {len(matches)} | "
+            f"Test split entries: {len(test_stems)} | Manifest entries: {len(manifest)} | Showing: {len(matches)} | "
             "Search matches filename, stem, and relative path."
         )
         selected_entry = st.selectbox(
