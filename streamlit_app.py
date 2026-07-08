@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import subprocess
 import tempfile
 from pathlib import Path
@@ -11,6 +12,7 @@ import pandas as pd
 import pydeck as pdk
 import streamlit as st
 import trimesh
+import streamlit.components.v1 as components
 from PIL import Image, ImageDraw
 
 
@@ -229,6 +231,353 @@ def render_oblique_preview(
     return img
 
 
+def build_threejs_html(
+    points_xyz: np.ndarray,
+    output_vertices: np.ndarray,
+    edges: Sequence[Tuple[int, int]],
+    height: int = 800,
+) -> str:
+    points_json = json.dumps(points_xyz.tolist())
+    vertices_json = json.dumps(output_vertices.tolist())
+    edges_json = json.dumps([[int(a), int(b)] for a, b in edges])
+
+    template = """
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body {{
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #0c0e12;
+      font-family: sans-serif;
+    }}
+    #wrap {{
+      position: relative;
+      width: 100%;
+      height: __HEIGHT__px;
+    }}
+    #hud {{
+      position: absolute;
+      left: 12px;
+      top: 12px;
+      z-index: 10;
+      color: #dbe8ff;
+      background: rgba(7, 10, 18, 0.75);
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.35;
+      pointer-events: none;
+    }}
+    canvas {{
+      display: block;
+    }}
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <div id="hud">Loading Three.js viewer...</div>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+  <script>
+    const points = __POINTS__;
+    const outputVertices = __VERTICES__;
+    const edges = __EDGES__;
+
+    const wrap = document.getElementById('wrap');
+    const hud = document.getElementById('hud');
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0c0e12);
+
+    const camera = new THREE.PerspectiveCamera(50, wrap.clientWidth / wrap.clientHeight, 0.001, 1000);
+    camera.position.set(1.8, 1.8, 1.8);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio || 1);
+    renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+    wrap.appendChild(renderer.domElement);
+
+    const controls = new THREE.OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+
+    function makePointsGeometry(array, colorHex) {{
+      const geometry = new THREE.BufferGeometry();
+      const flat = new Float32Array(array.length * 3);
+      for (let i = 0; i < array.length; i++) {{
+        flat[i * 3 + 0] = array[i][0];
+        flat[i * 3 + 1] = array[i][1];
+        flat[i * 3 + 2] = array[i][2];
+      }}
+      geometry.setAttribute('position', new THREE.BufferAttribute(flat, 3));
+      const material = new THREE.PointsMaterial({ size: 0.012, color: colorHex, sizeAttenuation: true });
+      return new THREE.Points(geometry, material);
+    }}
+
+    const inputPoints = makePointsGeometry(points, 0x4fa3ff);
+    scene.add(inputPoints);
+
+    const outPointCloud = makePointsGeometry(outputVertices, 0xffb14a);
+    outPointCloud.material.size = 0.016;
+    scene.add(outPointCloud);
+
+    const linePositions = [];
+    for (const [a, b] of edges) {{
+      if (a < outputVertices.length && b < outputVertices.length) {{
+        const va = outputVertices[a];
+        const vb = outputVertices[b];
+        linePositions.push(va[0], va[1], va[2], vb[0], vb[1], vb[2]);
+      }}
+    }}
+    const lineGeometry = new THREE.BufferGeometry();
+    lineGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(linePositions), 3));
+    const lineMaterial = new THREE.LineBasicMaterial({ color: 0xff8c3a });
+    const lines = new THREE.LineSegments(lineGeometry, lineMaterial);
+    scene.add(lines);
+
+    const box = new THREE.Box3().setFromObject(scene);
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z, 1e-6);
+    const dist = maxDim * 2.2;
+    camera.position.copy(center.clone().add(new THREE.Vector3(dist, dist, dist)));
+    controls.target.copy(center);
+    controls.update();
+
+    hud.innerHTML = `Input points: ${points.length}<br>Output vertices: ${outputVertices.length}<br>Edges: ${edges.length}<br>Drag to orbit, scroll to zoom`;
+
+    function animate() {{
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }}
+    animate();
+
+    window.addEventListener('resize', () => {{
+      camera.aspect = wrap.clientWidth / wrap.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(wrap.clientWidth, wrap.clientHeight);
+    }});
+  </script>
+</body>
+</html>
+"""
+    return (
+        template.replace("{{", "{")
+        .replace("}}", "}")
+        .replace("__HEIGHT__", str(height))
+        .replace("__POINTS__", points_json)
+        .replace("__VERTICES__", vertices_json)
+        .replace("__EDGES__", edges_json)
+    )
+
+
+def build_canvas_viewer_html(
+    points_xyz: np.ndarray,
+    output_vertices: np.ndarray,
+    edges: Sequence[Tuple[int, int]],
+    height: int = 800,
+) -> str:
+    points_json = json.dumps(points_xyz.tolist())
+    vertices_json = json.dumps(output_vertices.tolist())
+    edges_json = json.dumps([[int(a), int(b)] for a, b in edges])
+
+    template = """
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #0c0e12;
+      font-family: sans-serif;
+    }
+    #wrap {
+      position: relative;
+      width: 100%;
+      height: __HEIGHT__px;
+      background: #0c0e12;
+    }
+    #hud {
+      position: absolute;
+      left: 12px;
+      top: 12px;
+      z-index: 10;
+      color: #dbe8ff;
+      background: rgba(7, 10, 18, 0.78);
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      line-height: 1.35;
+      pointer-events: none;
+    }
+    canvas {
+      display: block;
+      cursor: grab;
+    }
+    canvas:active {
+      cursor: grabbing;
+    }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <canvas id="viewer"></canvas>
+    <div id="hud"></div>
+  </div>
+  <script>
+    const points = __POINTS__;
+    const outputVertices = __VERTICES__;
+    const edges = __EDGES__;
+
+    const wrap = document.getElementById("wrap");
+    const canvas = document.getElementById("viewer");
+    const ctx = canvas.getContext("2d");
+    const hud = document.getElementById("hud");
+
+    let az = Math.PI / 4;
+    let el = Math.PI / 5;
+    let zoom = 1.0;
+    let isDragging = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    const all = points.concat(outputVertices);
+    const center = [0, 0, 0];
+    for (const p of all) {
+      center[0] += p[0];
+      center[1] += p[1];
+      center[2] += p[2];
+    }
+    center[0] /= Math.max(all.length, 1);
+    center[1] /= Math.max(all.length, 1);
+    center[2] /= Math.max(all.length, 1);
+
+    function resize() {
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.floor(wrap.clientWidth * dpr);
+      canvas.height = Math.floor(wrap.clientHeight * dpr);
+      canvas.style.width = wrap.clientWidth + "px";
+      canvas.style.height = wrap.clientHeight + "px";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      draw();
+    }
+
+    function project(p) {
+      let x = p[0] - center[0];
+      let y = p[1] - center[1];
+      let z = p[2] - center[2];
+
+      const caz = Math.cos(az), saz = Math.sin(az);
+      const x1 = x * caz - y * saz;
+      const y1 = x * saz + y * caz;
+      const z1 = z;
+
+      const cel = Math.cos(el), sel = Math.sin(el);
+      const y2 = y1 * cel - z1 * sel;
+      const z2 = y1 * sel + z1 * cel;
+
+      const scale = Math.min(wrap.clientWidth, wrap.clientHeight) * 0.42 * zoom;
+      return [
+        wrap.clientWidth / 2 + x1 * scale,
+        wrap.clientHeight / 2 - y2 * scale,
+        z2,
+      ];
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, wrap.clientWidth, wrap.clientHeight);
+      ctx.fillStyle = "#0c0e12";
+      ctx.fillRect(0, 0, wrap.clientWidth, wrap.clientHeight);
+
+      const projectedPoints = points.map(project);
+      const projectedOut = outputVertices.map(project);
+
+      ctx.fillStyle = "rgba(80, 170, 255, 0.72)";
+      for (const p of projectedPoints) {
+        ctx.fillRect(p[0], p[1], 1.4, 1.4);
+      }
+
+      ctx.strokeStyle = "rgba(255, 145, 55, 0.95)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (const e of edges) {
+        const a = e[0], b = e[1];
+        if (a < projectedOut.length && b < projectedOut.length) {
+          const pa = projectedOut[a];
+          const pb = projectedOut[b];
+          ctx.moveTo(pa[0], pa[1]);
+          ctx.lineTo(pb[0], pb[1]);
+        }
+      }
+      ctx.stroke();
+
+      ctx.fillStyle = "rgba(255, 210, 90, 0.95)";
+      for (const p of projectedOut) {
+        ctx.beginPath();
+        ctx.arc(p[0], p[1], 2.8, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      hud.innerHTML =
+        `Offline dynamic viewer<br>` +
+        `Input points: ${points.length}<br>` +
+        `Output vertices: ${outputVertices.length}<br>` +
+        `Edges: ${edges.length}<br>` +
+        `Drag to rotate, wheel to zoom`;
+    }
+
+    canvas.addEventListener("mousedown", (ev) => {
+      isDragging = true;
+      lastX = ev.clientX;
+      lastY = ev.clientY;
+    });
+    window.addEventListener("mouseup", () => {
+      isDragging = false;
+    });
+    window.addEventListener("mousemove", (ev) => {
+      if (!isDragging) return;
+      const dx = ev.clientX - lastX;
+      const dy = ev.clientY - lastY;
+      lastX = ev.clientX;
+      lastY = ev.clientY;
+      az += dx * 0.01;
+      el = Math.max(-1.45, Math.min(1.45, el + dy * 0.01));
+      draw();
+    });
+    canvas.addEventListener("wheel", (ev) => {
+      ev.preventDefault();
+      zoom *= ev.deltaY < 0 ? 1.08 : 0.92;
+      zoom = Math.max(0.15, Math.min(12.0, zoom));
+      draw();
+    }, { passive: false });
+
+    window.addEventListener("resize", resize);
+    resize();
+  </script>
+</body>
+</html>
+"""
+    return (
+        template.replace("__HEIGHT__", str(height))
+        .replace("__POINTS__", points_json)
+        .replace("__VERTICES__", vertices_json)
+        .replace("__EDGES__", edges_json)
+    )
+
+
 def run_inference(
     point_cloud_path: Path,
     workspace: Path,
@@ -378,20 +727,35 @@ def main() -> None:
         f"Output vertices: `{output_vertices.shape[0]}` | "
         f"Output edges: `{len(output_edges)}`"
     )
-    deck = build_deck(
-        points_xyz=points_xyz,
-        edges=output_edges,
-        output_vertices=output_vertices,
-        point_size=float(point_size),
-        output_point_size=float(output_point_size),
-        edge_width=float(edge_width),
-    )
-    st.pydeck_chart(deck, use_container_width=True)
-
-    st.subheader("Fallback Preview")
-    st.caption("Static oblique render of the same overlay (useful if WebGL rendering fails).")
-    preview = render_oblique_preview(points_xyz, output_vertices, output_edges)
-    st.image(preview, use_container_width=True)
+    tabs = st.tabs(["Dynamic viewer", "Current viewer", "Three.js viewer", "Fallback preview"])
+    with tabs[0]:
+        st.caption("Offline browser viewer: no CDN or WebGL library dependency. Drag to rotate, scroll to zoom.")
+        components.html(
+            build_canvas_viewer_html(points_xyz, output_vertices, output_edges),
+            height=860,
+            scrolling=False,
+        )
+    with tabs[1]:
+        deck = build_deck(
+            points_xyz=points_xyz,
+            edges=output_edges,
+            output_vertices=output_vertices,
+            point_size=float(point_size),
+            output_point_size=float(output_point_size),
+            edge_width=float(edge_width),
+        )
+        st.pydeck_chart(deck, use_container_width=True)
+    with tabs[2]:
+        st.caption("Interactive Three.js orbit viewer embedded directly in Streamlit.")
+        components.html(
+            build_threejs_html(points_xyz, output_vertices, output_edges),
+            height=860,
+            scrolling=False,
+        )
+    with tabs[3]:
+        st.caption("Static oblique render of the same overlay (useful if WebGL rendering fails).")
+        preview = render_oblique_preview(points_xyz, output_vertices, output_edges)
+        st.image(preview, use_container_width=True)
 
     st.markdown(
         f"""
