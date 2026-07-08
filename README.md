@@ -70,6 +70,14 @@ Optional: try removing likely interior points before sampling (useful for dense 
 uv run python infer.py ArAE --workspace workspace --resume pretrained/ArAE.safetensors --test_path my_input.txt --generate_mode sample --test_num_face 1000 --test_repeat 1 --seed 42 --filter-interior-points
 ```
 
+## Streamlit App
+Run an interactive app that lets you pick a MunichWF point cloud, execute inference, and view an overlay of normalized input points with generated wireframe output:
+```
+uv run streamlit run streamlit_app.py
+```
+Default point-cloud directory in the app:
+`/data2/point-cloud-datasets/MunichWF/pc_part`
+
 ## CloudComPy Shell Helper
 If you installed CloudComPy manually under `third_party/cloudcompy/CloudComPy312`, start a clean shell with all required env vars in one command:
 ```

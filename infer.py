@@ -228,3 +228,5 @@ with open(opt.test_path, 'r') as f:
 # 对每个数字进行处理
 for path in file_paths:
     process(opt, path)
+
+print(f"[COMPLETE] Finished processing {len(file_paths)} input(s).")
