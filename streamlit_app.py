@@ -20,6 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 DEFAULT_DATA_DIR = Path("/data2/point-cloud-datasets/MunichWF/pc_part")
 DEFAULT_WORKSPACE = REPO_ROOT / "workspace"
 DEFAULT_CHECKPOINT = REPO_ROOT / "pretrained" / "ArAE.safetensors"
+DEFAULT_MANIFEST = DEFAULT_WORKSPACE / "munichwf_manifest.json"
 
 
 def normalize_points(points: np.ndarray, bound: float = 0.85) -> np.ndarray:
@@ -83,11 +84,56 @@ def load_ply_points(path: Path, downsample_n: int, seed: int) -> np.ndarray:
 
 
 @st.cache_data(show_spinner=False)
-def list_point_clouds(data_dir: str) -> List[str]:
+def load_or_build_manifest(data_dir: str, manifest_path: str) -> List[dict]:
     root = Path(data_dir)
     if not root.exists():
         return []
-    return sorted(str(p) for p in root.glob("*.ply"))
+
+    manifest_file = Path(manifest_path)
+    if manifest_file.exists():
+        with manifest_file.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list):
+            return data
+
+    entries: List[dict] = []
+    for p in sorted(root.rglob("*.ply")):
+        relpath = str(p.relative_to(root))
+        entries.append(
+            {
+                "path": str(p),
+                "relpath": relpath,
+                "name": p.name,
+                "stem": p.stem,
+                "display": f"{p.name} — {relpath}",
+            }
+        )
+
+    manifest_file.parent.mkdir(parents=True, exist_ok=True)
+    with manifest_file.open("w", encoding="utf-8") as f:
+        json.dump(entries, f, indent=2)
+    return entries
+
+
+def filter_manifest(entries: Sequence[dict], query: str, limit: int = 200) -> List[dict]:
+    q = query.strip().lower()
+    if not q:
+        return list(entries[:limit])
+
+    filtered: List[dict] = []
+    for entry in entries:
+        haystack = " ".join(
+            [
+                str(entry.get("name", "")),
+                str(entry.get("stem", "")),
+                str(entry.get("relpath", "")),
+            ]
+        ).lower()
+        if q in haystack:
+            filtered.append(entry)
+            if len(filtered) >= limit:
+                break
+    return filtered
 
 
 def build_deck(
@@ -642,6 +688,38 @@ def main() -> None:
         data_dir = Path(
             st.text_input("Point cloud folder", value=str(DEFAULT_DATA_DIR))
         )
+        manifest_path = Path(
+            st.text_input("Manifest file", value=str(DEFAULT_MANIFEST))
+        )
+        if not data_dir.exists():
+            st.error(f"Point cloud folder does not exist: `{data_dir}`.")
+            st.stop()
+
+        if not manifest_path.exists():
+            with st.spinner("Building point-cloud manifest..."):
+                manifest = load_or_build_manifest(str(data_dir), str(manifest_path))
+        else:
+            manifest = load_or_build_manifest(str(data_dir), str(manifest_path))
+
+        if not manifest:
+            st.error(f"No .ply files found in `{data_dir}`.")
+            st.stop()
+
+        search_query = st.text_input("Search filename or relative path", value="")
+        matches = filter_manifest(manifest, search_query, limit=200)
+        if not matches:
+            st.warning("No files matched your search.")
+            st.stop()
+
+        st.caption(
+            f"Manifest entries: {len(manifest)} | Showing: {len(matches)} | "
+            "Search matches filename, stem, and relative path."
+        )
+        selected_entry = st.selectbox(
+            "Point cloud file",
+            options=matches,
+            format_func=lambda e: e["display"],
+        )
         workspace = Path(
             st.text_input("Workspace", value=str(DEFAULT_WORKSPACE))
         )
@@ -662,17 +740,7 @@ def main() -> None:
         output_point_size = st.slider("Output vertex size", min_value=1.0, max_value=8.0, value=4.0, step=0.5)
         edge_width = st.slider("Edge width", min_value=1.0, max_value=8.0, value=2.0, step=0.5)
 
-    clouds = list_point_clouds(str(data_dir))
-    if not clouds:
-        st.error(f"No .ply files found in `{data_dir}`.")
-        st.stop()
-
-    selected = st.selectbox(
-        "Select MunichWF point cloud",
-        options=clouds,
-        format_func=lambda p: Path(p).name,
-    )
-    selected_path = Path(selected)
+    selected_path = Path(selected_entry["path"])
     name = selected_path.stem
 
     col_a, col_b = st.columns([1, 1])
